@@ -1,0 +1,14 @@
+{
+  "configurations": [
+    {
+      "name": "HIP",
+      "includePath": [
+        "${workspaceFolder}/common",
+        "C:/Program Files/AMD/ROCm/7.2/include"
+      ],
+      "defines": ["__HIP_PLATFORM_AMD__"],
+      "cppStandard": "c++17"
+    }
+  ],
+  "version": 4
+}
