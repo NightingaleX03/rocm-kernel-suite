@@ -101,4 +101,19 @@ int main(){
             return -1;
         }
     }
+
+    std::printf("Verification passed!\n");
+
+    // Bandwidth how much data moved between CPU and GPU in a given time
+    double gbPerSec = (size * 3) / (milliseconds / 1000.0) / 1e9; // 3 because we read A and B and write C
+    std::printf("Bandwidth: %f GB/s\n", gbPerSec);
+
+    // free device memory
+    HIP_CHECK(hipEventDestroy(start));
+    HIP_CHECK(hipEventDestroy(stop));
+
+    HIP_CHECK(hipFree(deviceA));
+    HIP_CHECK(hipFree(deviceB));
+    HIP_CHECK(hipFree(deviceC));
+
 }
