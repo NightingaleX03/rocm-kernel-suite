@@ -32,7 +32,7 @@ int main(){
 
         /*props.name = gpu name
         props.gcnArchName = gpu architecture name
-        props.warpSize = number of threads in a warp
+        props.warpSize = number of threads in a wavefront (group of threads GPU runs together)
         props.multiProcessorCount = number of compute units
         */
 
@@ -43,6 +43,62 @@ int main(){
         hostB[i] = static_cast<float>(67*i);
         // hostC is an output array 
     }
-
     
+    // allocate memory on device
+    float *deviceA, *deviceB, *deviceC; 
+    HIP_CHECK(hipMalloc(&deviceA, size));
+    HIP_CHECK(hipMalloc(&deviceB, size));
+    HIP_CHECK(hipMalloc(&deviceC, size));
+
+    // copy input from CPU to GPU
+    HIP_CHECK(hipMemcpy(deviceA, hostA.data(), size, hipMemcpyHostToDevice));
+    HIP_CHECK(hipMemcpy(deviceB, hostB.data(), size, hipMemcpyHostToDevice));
+    // no host C cause it's output
+    
+    // launch kernel
+
+    /*thread kind of like student, classroom is a block (students share room and work together)
+    school is grid of all classrooms
+    
+    thread = student, 1 worker
+    wavefront = 32 threads 
+    block = classroom so if it's 256 threads that's 8 wavefronts
+    grid = school with all the classrooms
+    */
+
+    int threadsPerBlock = 256; // number of threads in a block
+    int blocksPerGrid = (number + threadsPerBlock - 1) / threadsPerBlock; // number of blocks in a grid
+
+    // how to time stuff on GPU 
+    hipEvent_t start, stop;
+    HIP_CHECK(hipEventCreate(&start));
+    HIP_CHECK(hipEventCreate(&stop)); 
+
+    HIP_CHECK(hipEventRecord(start)); // record start time
+    vector_add<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, number); // launch kernel
+    HIP_CHECK(hipEventRecord(stop)); // record stop time
+    HIP_CHECK(hipEventSynchronize(stop)); // wait for stop event to complete
+
+
+    float milliseconds = 0;
+    HIP_CHECK(hipEventElapsedTime(&milliseconds, start, stop)); // calculate time
+
+    std::printf("Time elapsed: %f ms\n", milliseconds);
+
+    // copy output from GPU to CPU
+    HIP_CHECK(hipMemcpy(hostC.data(), deviceC, size, hipMemcpyDeviceToHost));
+
+    // verify results
+    for (int i = 0; i < number; i++) {
+
+        float expected = hostA[i] + hostB[i];
+
+        // check if the result is within expected range
+        // if not return -1 to indicate failure
+        if (std::fabs(hostC[i] - expected) > 1e-5) {
+            std::printf("Verification failed at index %d: %f, expected %f\n", i, hostC[i], expected);
+
+            return -1;
+        }
+    }
 }
