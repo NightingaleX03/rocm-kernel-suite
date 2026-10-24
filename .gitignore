@@ -1,0 +1,7 @@
+# Build outputs
+*.exe
+*.pdb
+*.lib
+*.exp
+*.obj
+*.o
