@@ -2,9 +2,10 @@
 #include <cmath>
 #include <cstdio> // output library
 #include <vector>
+#include <cstdlib>
 #include "hip_check.h"
 
-/** blockiIdx blockDim, threadIdx are build in variables CUDA provides every gpu function
+/** blockiIdx blockDim, threadIdx are build in variables HIP provides every gpu function
  __global__ is a keyword that tells the compiler that this function will be executed 
      on the GPU and can be called from the CPU
 This function adds two vectors A and B and stores the result in vector C */
@@ -21,8 +22,12 @@ __global__ void vector_add(const float* A, const float* B, float* C, int N) {
 }
 
 // main
-int main(){
-    const int number = 1 << 20; // 1M elements <- 1 with n number of zeros in binary
+int main(int argc, char** argv){
+
+    int power = (argc > 1) ? std::atoi(argv[1]) : 24; // to test for results file 
+    int threadsPerBlock = (argc > 2) ? std::atoi(argv[2]) : 256;
+
+    int number = 1 << power; // 1M elements <- 1 with n number of zeros in binary
     const size_t size = number * sizeof(float);
 
     hipDeviceProp_t props; // info about GPU <3
@@ -39,8 +44,8 @@ int main(){
     // adding data
     std::vector<float> hostA(number), hostB(number), hostC(number); // initialize vector with 1.0f
     for (int i = 0; i < number; i++) {
-        hostA[i] = static_cast<float>(i);
-        hostB[i] = static_cast<float>(67*i);
+        hostA[i] = static_cast<float>(i);                                                        
+        hostB[i] = static_cast<float>(67.0f * i); // initialize hostA and hostB with some values
         // hostC is an output array 
     }
     
@@ -66,7 +71,6 @@ int main(){
     grid = school with all the classrooms
     */
 
-    int threadsPerBlock = 256; // number of threads in a block
     int blocksPerGrid = (number + threadsPerBlock - 1) / threadsPerBlock; // number of blocks in a grid
 
     // how to time stuff on GPU 
@@ -74,19 +78,37 @@ int main(){
     HIP_CHECK(hipEventCreate(&start));
     HIP_CHECK(hipEventCreate(&stop)); 
 
-    HIP_CHECK(hipEventRecord(start)); // record start time
-    vector_add<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, number); // launch kernel
-    HIP_CHECK(hipEventRecord(stop)); // record stop time
-    HIP_CHECK(hipEventSynchronize(stop)); // wait for stop event to complete
+    vector_add<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, number);
+    HIP_CHECK(hipGetLastError()); // check if kernel launch was successful
+    HIP_CHECK(hipDeviceSynchronize()); // wait for GPU to finish before continuing
 
+
+    // time 100 launches and average
+    const int iterations = 100;
+    HIP_CHECK(hipDeviceSynchronize()); // gpu is idle before starting
+    HIP_CHECK(hipEventRecord(start));
+
+
+    for (int iter = 0; iter < iterations; iter++) {
+        vector_add<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, number);
+    }
+
+    // check for errors during kernel launch
+    HIP_CHECK(hipGetLastError());
+    HIP_CHECK(hipEventRecord(stop));
+    HIP_CHECK(hipEventSynchronize(stop));
 
     float milliseconds = 0;
     HIP_CHECK(hipEventElapsedTime(&milliseconds, start, stop)); // calculate time
+    milliseconds /= iterations; // average time per iteration
 
-    std::printf("Time elapsed: %f ms\n", milliseconds);
+    std::printf("Time elapsed: %f ms\n", milliseconds); // average time per iteration
 
     // copy output from GPU to CPU
     HIP_CHECK(hipMemcpy(hostC.data(), deviceC, size, hipMemcpyDeviceToHost));
+
+    // for which testing we're on
+    std::printf("Elements: %d (2^%d), threads/block: %d\n", number, power, threadsPerBlock);
 
     // verify results
     for (int i = 0; i < number; i++) {
