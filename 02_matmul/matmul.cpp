@@ -17,7 +17,7 @@ A = [1, 2,
 B = [5, 6,
      7, 8]
 
-rule of matrix multiplication: [A[row][column] * B[row][column]] = C[row][column]
+rule of matrix multiplication: C[row][col] = sum over k of A[row][k] * B[k][col]
 C = [1*5+2*7, 1*6+2*8, 3*5+4*7, 3*6+4*8] = [19, 22, 43, 50]
 */
 
@@ -34,4 +34,35 @@ __global__ void matmul_naive(const float* A, const float* B, float* C, int N) {
 
         C[row * N + col] = sum; // result of dot product is stored in C[row][col]
     }
+}
+
+// main method
+int main(int argc, char** argv){
+    int N = (argc > 1) ? atoi(argv[1]) : 1024; // default size is 1024 if not specified
+    const size_t bytes = (size_t)N * N * sizeof(float);
+    
+    hipDeviceProp_t props;
+    HIP_CHECK(hipGetDeviceProperties(&props, 0));
+
+    std:printf("Device: %s (%s), wavefront size: %d, CUs: %d\n", 
+        props.name, props.gcnArchName, props.warpSize, props.multiProcessorCount);
+    printf("Matrix size: %d x %d\n", N, N);
+
+    // creating matrix
+    std::vector<float> hostA(N * N), hostB(N * N), hostC(N * N);
+    for (int i = 0; i < N * N; ++i) {
+        hostA[i] = static_cast<float>(i);
+        hostB[i] = static_cast<float>(i * 2);
+    }
+
+    // allocate memory on device
+    float *deviceA, *deviceB, *deviceC; 
+    HIP_CHECK(hipMalloc(&deviceA, size));
+    HIP_CHECK(hipMalloc(&deviceB, size));
+    HIP_CHECK(hipMalloc(&deviceC, size));
+
+    // copy input from CPU to GPU
+    HIP_CHECK(hipMemcpy(deviceA, hostA.data(), size, hipMemcpyHostToDevice));
+    HIP_CHECK(hipMemcpy(deviceB, hostB.data(), size, hipMemcpyHostToDevice));
+    
 }
