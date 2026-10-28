@@ -81,5 +81,75 @@ int main(int argc, char** argv){
     HIP_CHECK(hipMemcpy(deviceA, hostA.data(), size, hipMemcpyHostToDevice));
     HIP_CHECK(hipMemcpy(deviceB, hostB.data(), size, hipMemcpyHostToDevice));
     
+    // dim3 means dimension of 3D grid 
+    dim3 threadsPerBlock(16, 16); // 16x16 = 256 threads per block
+    dim3 blocksPerGrid((N + threadsPerBlock.x - 1) / threadsPerBlock.x, 
+        (N + threadsPerBlock.y - 1) / threadsPerBlock.y);
 
+    // starting timer
+    hipEvent_t start, stop;
+    
+    // setting up
+    HIP_CHECK(hipEventCreate(&start));
+    HIP_CHECK(hipEventCreate(&stop));
+
+    // warmup kernel launch
+    matmul_naive<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, N);
+    HIP_CHECK(hipGetLastError());
+    HIP_CHECK(hipDeviceSynchronize());
+
+    // 15 launches and average <3
+    const int iterations = 15;
+    HIP_CHECK(hipEventRecord(start));
+
+    // launches 15 times and takes average <3
+    for (int i = 0; i < iterations; ++i) {
+        matmul_naive<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, N);
+    }
+
+    HIP_CHECK(hipGetLastError()); // check if kernel launch was successful
+    HIP_CHECK(hipEventRecord(stop)); // stop timer
+    HIP_CHECK(hipEventSynchronize(stop)); // wait for GPU to finish before continuing
+
+    float milliseconds = 0;
+    HIP_CHECK(hipEventElapsedTime(&milliseconds, start, stop)); // get elapsed time
+    milliseconds /= iterations; // average time per launch
+    std::printf("Average Kernal Naive Time: %f ms\n", milliseconds);
+
+     // copy GPU result back to CPU
+    HIP_CHECK(hipMemcpy(hostC.data(), deviceC, size, hipMemcpyDeviceToHost));
+
+    // calculate correct answer on the CPU
+    std::printf("Running CPU reference (may take a few seconds)...\n");
+    matmul_cpu(hostA, hostB, hostRef, N);
+
+    // compare GPU vs CPU
+    int errors = 0;
+
+    for (int i = 0; i < N * N; ++i) {
+        float diff = std::fabs(hostC[i] - hostRef[i]);
+
+        if (diff > 1e-3f * std::fabs(hostRef[i])) {   // allow 0.1% difference
+            
+            if (errors < 5) {
+                std::printf("Mismatch at %d: GPU %f, CPU %f\n", i, hostC[i], hostRef[i]);
+            }
+            errors++;
+        }
+    }
+
+    // GFLOPS: each of the N*N outputs does N multiplies + N adds = 2*N^3 total
+    double flops = 2.0 * N * N * N;
+    double gflops = flops / (milliseconds / 1000.0) / 1e9;
+    std::printf("Naive GFLOPS: %.1f\n", gflops);
+    std::printf("%s (%d errors)\n", errors == 0 ? "PASSED" : "FAILED", errors);
+
+    // clean up <3 <3 <3
+    HIP_CHECK(hipEventDestroy(start));
+    HIP_CHECK(hipEventDestroy(stop));
+    HIP_CHECK(hipFree(deviceA));
+    HIP_CHECK(hipFree(deviceB));
+    HIP_CHECK(hipFree(deviceC));
+
+    return errors == 0 ? 0 : 1;
 }
