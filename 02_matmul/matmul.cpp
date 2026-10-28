@@ -36,23 +36,39 @@ __global__ void matmul_naive(const float* A, const float* B, float* C, int N) {
     }
 }
 
+// CPU versino of matrix multiplication for verification
+void matmul_cpu(const std::vector<float>& A, const std::vector<float>& B, std::vector<float>& C, int N) {
+
+    for (int row = 0; row < N; ++row) {
+        
+        for (int col = 0; col < N; ++col) {
+            
+            float sum = 0.0f;
+            for (int k = 0; k < N; ++k) {
+                sum += A[row * N + k] * B[k * N + col];
+            }
+            C[row * N + col] = sum;
+        }
+    }
+}
+
 // main method
 int main(int argc, char** argv){
     int N = (argc > 1) ? atoi(argv[1]) : 1024; // default size is 1024 if not specified
-    const size_t bytes = (size_t)N * N * sizeof(float);
+    const size_t size = (size_t)N * N * sizeof(float);
     
     hipDeviceProp_t props;
     HIP_CHECK(hipGetDeviceProperties(&props, 0));
 
-    std:printf("Device: %s (%s), wavefront size: %d, CUs: %d\n", 
+    std::printf("Device: %s (%s), wavefront size: %d, CUs: %d\n", 
         props.name, props.gcnArchName, props.warpSize, props.multiProcessorCount);
-    printf("Matrix size: %d x %d\n", N, N);
+    std::printf("Matrix size: %d x %d\n", N, N);
 
     // creating matrix
-    std::vector<float> hostA(N * N), hostB(N * N), hostC(N * N);
+    std::vector<float> hostA(N * N), hostB(N * N), hostC(N * N), hostRef(N * N); // hostRef is for CPU verification
     for (int i = 0; i < N * N; ++i) {
-        hostA[i] = static_cast<float>(i);
-        hostB[i] = static_cast<float>(i * 2);
+        hostA[i] = static_cast<float>(std::rand()) / RAND_MAX; // random float between 0 and 1
+        hostB[i] = static_cast<float>(std::rand()) / RAND_MAX; // random float between 0 and 1
     }
 
     // allocate memory on device
@@ -65,4 +81,5 @@ int main(int argc, char** argv){
     HIP_CHECK(hipMemcpy(deviceA, hostA.data(), size, hipMemcpyHostToDevice));
     HIP_CHECK(hipMemcpy(deviceB, hostB.data(), size, hipMemcpyHostToDevice));
     
+
 }
