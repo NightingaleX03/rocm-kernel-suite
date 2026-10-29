@@ -52,8 +52,66 @@ void matmul_cpu(const std::vector<float>& A, const std::vector<float>& B, std::v
     }
 }
 
-// main method
+/* tiled version
+instead of every thread grabbing numbers from slow global memory over and over,
+the block loads a 16x16 chunk of A and B into shared memory (LDS) once
+then all 256 threads reuse it from there <3
+
+example with TILE = 16, N = 1024:
+C gets split into 16x16 tiles, 1 block = 1 tile of C
+each block goes through 1024 / 16 = 64 phases
+each phase: load chunk -> wait -> multiply -> wait
+*/
+
+#define TILE 16 // tile size, has to match the 16x16 block size
+
+__global__ void matmul_tiled(const float* A, const float* B, float* C, int N) {
+    // shared memory (LDS) whole block can see these
+    __shared__ float tileA[TILE][TILE];
+    __shared__ float tileB[TILE][TILE];
+
+    int tx = threadIdx.x; // my column inside the tile
+    int ty = threadIdx.y; // my row inside the tile
+    int row = blockIdx.y * TILE + ty; // my row in C (y goes down)
+    int col = blockIdx.x * TILE + tx; // my column in C (x goes across)
+
+    float sum = 0.0f;
+    int numTiles = (N + TILE - 1) / TILE; // number of phases, rounds up
+
+    for (int t = 0; t < numTiles; ++t) {
+        // each thread loads ONE number from A and ONE from B
+        int aCol = t * TILE + tx; // A: my row, column shifted to this chunk
+        int bRow = t * TILE + ty; // B: my column, row shifted to this chunk
+
+        // if we fall off the edge load 0 so it doesn't change the sum
+        tileA[ty][tx] = (row < N && aCol < N) ? A[row * N + aCol] : 0.0f;
+        tileB[ty][tx] = (bRow < N && col < N) ? B[bRow * N + col] : 0.0f;
+
+        __syncthreads(); // wait until the whole tile is loaded before reading
+
+        // same dot product as naive but only 16 steps and reading from LDS
+        for (int k = 0; k < TILE; ++k) {
+            sum += tileA[ty][k] * tileB[k][tx]; // across A's row, down B's column
+        }
+
+        __syncthreads(); // wait until everyone's done reading before next tile overwrites it
+    }
+
+    // only write if we're inside the matrix
+    if (row < N && col < N) {
+        C[row * N + col] = sum; // final answer for C[row][col]
+    }
+}
+
+/* why no early return?
+every thread in the block HAS to reach every __syncthreads()
+if one thread returns early the others wait forever = deadlock
+so edge threads just load 0 instead of leaving
+*/
+
+// MAIN <3 <3 <3
 int main(int argc, char** argv){
+
     int N = (argc > 1) ? atoi(argv[1]) : 1024; // default size is 1024 if not specified
     const size_t size = (size_t)N * N * sizeof(float);
     
@@ -93,6 +151,7 @@ int main(int argc, char** argv){
     HIP_CHECK(hipEventCreate(&start));
     HIP_CHECK(hipEventCreate(&stop));
 
+    // MATMAL <3 <3 <3
     // warmup kernel launch
     matmul_naive<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, N);
     HIP_CHECK(hipGetLastError());
@@ -144,6 +203,51 @@ int main(int argc, char** argv){
     std::printf("Naive GFLOPS: %.1f\n", gflops);
     std::printf("%s (%d errors)\n", errors == 0 ? "PASSED" : "FAILED", errors);
 
+    // TILED KERNEL <3 <3 <3
+
+    // wipe deviceC so we know tiled actually wrote the answer (not leftover from naive)
+    HIP_CHECK(hipMemset(deviceC, 0, size));
+
+    // warmup tiled launch
+    matmul_tiled<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, N);
+    HIP_CHECK(hipGetLastError());
+    HIP_CHECK(hipDeviceSynchronize());
+
+    // 15 launches and average <3
+    HIP_CHECK(hipEventRecord(start));
+    for (int i = 0; i < iterations; ++i) {
+        matmul_tiled<<<blocksPerGrid, threadsPerBlock>>>(deviceA, deviceB, deviceC, N);
+    }
+    HIP_CHECK(hipGetLastError());
+    HIP_CHECK(hipEventRecord(stop));
+    HIP_CHECK(hipEventSynchronize(stop));
+
+    float tiledMs = 0;
+    HIP_CHECK(hipEventElapsedTime(&tiledMs, start, stop));
+    tiledMs /= iterations; // average time per launch
+    std::printf("Average Kernel Tiled Time: %f ms\n", tiledMs);
+
+    // copy tiled result back and check it against the same CPU answer
+    HIP_CHECK(hipMemcpy(hostC.data(), deviceC, size, hipMemcpyDeviceToHost));
+
+    int tiledErrors = 0;
+    for (int i = 0; i < N * N; ++i) {
+        float diff = std::fabs(hostC[i] - hostRef[i]);
+        if (diff > 1e-3f * std::fabs(hostRef[i])) {
+            if (tiledErrors < 5) {
+                std::printf("Tiled mismatch at %d: GPU %f, CPU %f\n", i, hostC[i], hostRef[i]);
+            }
+            tiledErrors++;
+        }
+    }
+
+    double tiledGflops = flops / (tiledMs / 1000.0) / 1e9;
+    std::printf("Tiled GFLOPS: %.1f\n", tiledGflops);
+    std::printf("%s (%d errors)\n", tiledErrors == 0 ? "PASSED" : "FAILED", tiledErrors);
+
+    // how much faster tiled is <3
+    std::printf("Speedup: %.2fx\n", milliseconds / tiledMs);
+
     // clean up <3 <3 <3
     HIP_CHECK(hipEventDestroy(start));
     HIP_CHECK(hipEventDestroy(stop));
@@ -151,5 +255,5 @@ int main(int argc, char** argv){
     HIP_CHECK(hipFree(deviceB));
     HIP_CHECK(hipFree(deviceC));
 
-    return errors == 0 ? 0 : 1;
+    return (errors == 0 && tiledErrors == 0) ? 0 : 1; // return 0 if both naive and tiled passed, else return 1
 }
