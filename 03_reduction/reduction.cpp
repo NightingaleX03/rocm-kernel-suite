@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <vector>
 #include "hip_check.h"
-#include "reduce_kernels.h" // both kernels live here
+#include "reduction_kernals.h" // both kernels live here
 
 // the two versions we're comparing (an enum = a list of named options)
 enum ReductionVersion { LDSTree, WavefrontShuffle };
