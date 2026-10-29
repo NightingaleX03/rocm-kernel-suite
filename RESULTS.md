@@ -82,3 +82,35 @@
 - Naive was already getting help from the cache, so it wasn't as slow as it could have been
 - Tiled now reads from LDS twice for every multiply-add, so LDS speed becomes the new limit
 - Each thread still only works out one spot of C. Next step would be register tiling (each thread does a few spots at once)
+
+## $\color{#F06292}{\textsf{03 Parallel Reduction}}$
+
+### $\color{#F8C8DC}{\textsf{LDS tree vs. wavefront shuffle (16M numbers)}}$
+| Version | Time (ms) | Bandwidth (GB/s) |
+|---|---|---|
+| LDS tree | 0.838 | 80.1 |
+| Wavefront shuffle | 0.419 | 160.2 |
+
+**Speedup:** $\color{#F06292}{\textsf{2.00x}}$ from wavefront shuffle
+
+### $\color{#F8C8DC}{\textsf{Size sweep}}$
+| Numbers | Data | LDS tree (ms) | LDS tree (GB/s) | Shuffle (ms) | Shuffle (GB/s) | Speedup |
+|---|---|---|---|---|---|---|
+| 1M (2^20) | 4 MB | 0.061 | 68.3 | 0.045 | 93.8 | 1.37x |
+| 4M (2^22) | 16 MB | 0.237 | 70.9 | 0.155 | 108.1 | 1.53x |
+| 16M (2^24) | 64 MB | 0.838 | 80.1 | 0.419 | 160.2 | 2.00x |
+| 64M (2^26) | 256 MB | 2.229 | 120.4 | 1.627 | 164.9 | 1.37x |
+
+### $\color{#F8C8DC}{\textsf{Summary}}$
+
+**LDS tree** (students writing on a shared whiteboard)
+- Each block loads 256 numbers into LDS, then adds them in pairs like a tournament (128 -> 64 -> ... -> 1)
+- Needs a `__syncthreads()` after every step, so 9 waits per block
+- Half the threads go idle each step, by the end 255 out of 256 are just waiting
+- Got ~80 GB/s at 16M
+
+**Wavefront shuffle** (students passing notes directly to each other)
+- Threads in the same wavefront pass numbers straight to each other through registers with `__shfl_down`
+- No LDS and no `__syncthreads()` inside a wavefront because they already move together
+- Only 1 `__syncthreads()` per block (to combine the 8 wavefront totals)
+- Got ~160 GB/s at 16M, 2x faster
