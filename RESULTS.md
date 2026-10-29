@@ -114,3 +114,29 @@
 - No LDS and no `__syncthreads()` inside a wavefront because they already move together
 - Only 1 `__syncthreads()` per block (to combine the 8 wavefront totals)
 - Got ~160 GB/s at 16M, 2x faster
+
+## $\color{#F06292}{\textsf{04 Histogram}}$
+
+### $\color{#F8C8DC}{\textsf{Global atomics vs. privatized}}$
+| Data | Size | Global atomics (ms) | Global (GB/s) | Privatized (ms) | Privatized (GB/s) | Speedup |
+|---|---|---|---|---|---|---|
+| Random 0-255 | 16M (16 MB) | 0.726 | 23.1 | 0.076 | 221.1* | 9.56x |
+| Random 0-255 | 64M (64 MB) | 2.897 | 23.2 | 0.553 | 121.3 | 5.24x |
+| All the same value | 16M (16 MB) | 5.813 | 2.9 | 0.363 | 46.3 | 16.03x |
+
+\*16 MB fits in the GPU's cache so this one got extra help. 64M is the more realistic number.
+
+**Speedup:** $\color{#F06292}{\textsf{5.2x}}$ on random data, $\color{#F06292}{\textsf{16x}}$ when every value is the same
+
+### $\color{#F8C8DC}{\textsf{Summary}}$
+
+**Global atomics** (everyone lining up at one tally board)
+- Every thread adds straight into the 256 bins in global memory with `atomicAdd`
+- Stuck at ~23 GB/s no matter how big the data is, so it's limited by how fast atomics can go, not memory
+- When every value is the same it drops to 2.9 GB/s cause every thread in the GPU is fighting over 1 bin :(
+
+**Privatized** (each polling station counts its own votes first)
+- Each block counts into its own bins in LDS, then adds them to the global bins once at the end
+- Way less waiting cause only threads in the same block compete, and LDS is fast
+- Got 121 GB/s on 64M random numbers, 5.2x faster
+- Still 46 GB/s in the worst case, 16x faster than global atomics
