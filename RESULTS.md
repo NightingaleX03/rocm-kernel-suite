@@ -44,3 +44,41 @@
 - Threads per block changed from 64 to 1024
 - Elements stayed the same: 16M
 - Almost no difference. Vector add is limited by memory speed, so how threads are grouped doesn't matter.
+
+## $\color{#F06292}{\textsf{02 Matrix Multiplication}}$
+
+### $\color{#F8C8DC}{\textsf{Naive vs. tiled (1024 x 1024)}}$
+| Kernel | Time (ms) | GFLOPS |
+|---|---|---|
+| Naive (global memory) | 7.42 | 289.4 |
+| Tiled (16x16 LDS tiles) | 3.26 | 657.9 |
+
+**Speedup:** $\color{#F06292}{\textsf{2.27x}}$ from tiling
+
+### $\color{#F8C8DC}{\textsf{Size sweep}}$
+| Size | Naive (ms) | Naive GFLOPS | Tiled (ms) | Tiled GFLOPS | Speedup |
+|---|---|---|---|---|---|
+| 256 | 0.155 | 216.6 | 0.088 | 383.1 | 1.77x |
+| 512 | 1.012 | 265.2 | 0.509 | 527.1 | 1.99x |
+| 1024 | 7.417 | 289.5 | 3.335 | 643.9 | 2.22x |
+| 2048 | 41.881 | 410.2 | 14.947 | 1149.4 | 2.80x |
+
+### $\color{#F8C8DC}{\textsf{Summary}}$
+
+**Naive** (every student walks to the library for every page)
+- Each thread works out one spot of C by reading a full row of A and a full column of B
+- Every number comes straight from global memory, which is slow
+- Neighbouring threads keep loading the same numbers over and over
+- Got 289 GFLOPS, which is only about 2% of what the GPU can do (~15 TFLOPS)
+- Still ~5x faster than if every load went to main memory (~57 GFLOPS), so the GPU's cache was already helping a bit
+
+**Tiled** (one trip to the library, then everyone reads from the shared table)
+- Each block loads a 16x16 chunk of A and B into LDS (fast shared memory) once
+- All 256 threads in the block reuse that chunk instead of going back to global memory
+- `__syncthreads()` makes everyone wait until the chunk is fully loaded, and again until everyone is done using it
+- Got 658 GFLOPS, 2.27x faster than naive
+
+**Why not 16x faster?**
+- Naive was already getting help from the cache, so it wasn't as slow as it could have been
+- Tiled now reads from LDS twice for every multiply-add, so LDS speed becomes the new limit
+- Each thread still only works out one spot of C. Next step would be register tiling (each thread does a few spots at once)
