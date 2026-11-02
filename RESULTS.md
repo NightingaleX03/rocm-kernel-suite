@@ -140,3 +140,34 @@
 - Way less waiting cause only threads in the same block compete, and LDS is fast
 - Got 121 GB/s on 64M random numbers, 5.2x faster
 - Still 46 GB/s in the worst case, 16x faster than global atomics
+
+## $\color{#F06292}{\textsf{05 Prefix Scan (Blelloch)}}$
+
+### $\color{#F8C8DC}{\textsf{GPU vs. CPU}}$
+| Numbers | Data | GPU (ms) | GPU (GB/s) | CPU (ms) | Speedup |
+|---|---|---|---|---|---|
+| 1M (2^20) | 4 MB | 0.045 | 187.7 | 0.489 | 10.94x |
+| 4M (2^22) | 16 MB | 0.177 | 189.2 | 2.143 | 12.08x |
+| 16M (2^24) | 64 MB | 1.229 | 109.2 | 8.015 | 6.52x |
+| 64M (2^26) | 256 MB | 8.004 | 67.1 | 32.217 | 4.03x |
+
+GB/s only counts reading the input once and writing the output once. The real traffic is about 2x that cause the output gets read and written again in step 3.
+
+**Speedup:** $\color{#F06292}{\textsf{up to 12x}}$ faster than the CPU
+
+### $\color{#F8C8DC}{\textsf{Summary}}$
+
+**Blelloch scan** (a fundraiser where groups report totals up, then hand them back down)
+- Up-sweep adds up chunks once (pairs, groups of 4, groups of 8...) like reduction
+- Down-sweep hands those sums back down so every spot knows how much came before it
+- Each block scans 512 numbers in LDS (256 threads, 2 numbers each)
+
+**Big arrays** (a stadium where each section counts its own rows first)
+1. Scan each block and save its total
+2. Scan the block totals (same kernel again, one level up: 16M -> 32768 -> 64 -> 1)
+3. Add each block's total-before-it to its numbers
+
+**Size sweep**
+- Small sizes got cache help cause the data was still in cache for step 3
+- At 16M it's limited by memory, the real traffic is around 218 GB/s, close to the max
+- At 64M it drops to 67 GB/s, still figuring out why 
