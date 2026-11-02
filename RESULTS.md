@@ -171,3 +171,36 @@ GB/s only counts reading the input once and writing the output once. The real tr
 - Small sizes got cache help cause the data was still in cache for step 3
 - At 16M it's limited by memory, the real traffic is around 218 GB/s, close to the max
 - At 64M it drops to 67 GB/s, still figuring out why 
+
+## $\color{#F06292}{\textsf{ISA Trace: HIP -> LLVM IR -> AMDGPU}}$
+
+Generated with:
+
+    hipcc -O3 --offload-arch=gfx1151 --offload-device-only -S -emit-llvm matmul.cpp -o matmul_gpu.ll
+    hipcc -O3 --offload-arch=gfx1151 --offload-device-only -S matmul.cpp -o matmul_gpu.s
+
+### $\color{#F8C8DC}{\textsf{Kernel info}}$
+| | Naive | Tiled |
+|---|---|---|
+| LDS used | 0 bytes | 2048 bytes (2 tiles x 16 x 16 x 4 bytes) |
+| Registers (VGPRs) | 9 | 26 |
+| Wavefront size | 32 | 32 |
+
+### $\color{#F8C8DC}{\textsf{What I found}}$
+
+**LLVM IR** (the in between step)
+- A, B, and C are `addrspace(1)` which means global memory
+- tileA and tileB are `addrspace(3)` which means LDS (shared memory)
+- My `__syncthreads()` shows up as `@llvm.amdgcn.s.barrier`, there's 2 of them just like in my code
+- LLVM unrolled my k loop, so instead of looping 16 times it just wrote out all 16 steps
+
+**AMDGPU assembly** (what the GPU actually runs)
+- Naive does 2 global loads (one from A, one from B) for every multiply-add, so every number comes from slow memory
+- Tiled only does 2 global loads every 16 multiply-adds, so 16x fewer, then saves them into LDS with `ds_store_b32`
+- `s_barrier` is my `__syncthreads()` in machine code
+- The compiler was smart and combined my LDS reads, 32 loads turned into 12
+  - `ds_load_b128` grabs 4 floats at once from tileA cause a row is side by side in memory
+  - `ds_load_2addr_b32` grabs 2 floats at once from tileB cause it's going down a column
+- Tiled uses about 3x more registers (26 vs 9) cause it holds more values at once, which means fewer wavefronts can run at the same time
+
+**ISA trace:** looked at the LLVM IR and AMDGPU assembly for matmul and saw tiling cut global loads 16x per multiply-add
