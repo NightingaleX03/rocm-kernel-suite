@@ -173,7 +173,7 @@ int main(int argc, char** argv){
     float milliseconds = 0;
     HIP_CHECK(hipEventElapsedTime(&milliseconds, start, stop)); // get elapsed time
     milliseconds /= iterations; // average time per launch
-    std::printf("Average Kernal Naive Time: %f ms\n", milliseconds);
+    std::printf("Average Kernel Naive Time: %f ms\n", milliseconds);
 
      // copy GPU result back to CPU
     HIP_CHECK(hipMemcpy(hostC.data(), deviceC, size, hipMemcpyDeviceToHost));
